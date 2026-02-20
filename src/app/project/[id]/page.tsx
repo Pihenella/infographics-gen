@@ -1,17 +1,14 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useQuery, useMutation, useAction } from "convex/react";
+import dynamic from "next/dynamic";
 import { api } from "../../../../convex/_generated/api";
 import { Id } from "../../../../convex/_generated/dataModel";
 import {
   Upload,
-  Image,
-  Wand2,
-  Download,
   ChevronLeft,
-  Eye,
   X,
   RefreshCw,
   Layers,
@@ -19,52 +16,98 @@ import {
   Star,
   Sparkles,
   AlertCircle,
+  Wand2,
+  Scissors,
 } from "lucide-react";
+import { SheetsImport } from "./SheetsImport";
+import { BgRemover } from "./BgRemover";
+import { CarouselSettings } from "./CarouselSettings";
+
+const CanvasEditor = dynamic(() => import("./CanvasEditor"), { ssr: false });
 
 export default function ProjectPage() {
   const params = useParams();
   const router = useRouter();
   const projectId = params.id as Id<"projects">;
 
+  // --- Convex queries ---
   const project = useQuery(api.projects.get, { id: projectId });
   const generatedImages = useQuery(api.images.listByProject, { projectId });
 
+  // --- Convex mutations ---
   const setReferenceImage = useMutation(api.projects.setReferenceImage);
   const setProductImage = useMutation(api.projects.setProductImage);
   const updateStyleAnalysis = useMutation(api.projects.updateStyleAnalysis);
   const generateUploadUrl = useMutation(api.images.generateUploadUrl);
   const createImage = useMutation(api.images.create);
-  const analyzeStyle = useAction(api.analyze.analyzeReferenceStyle);
-  const generatePrompt = useAction(api.analyze.generatePrompt);
+  const updateImageData = useMutation(api.images.updateImageData);
 
-  // Local UI state
+  // --- Convex actions ---
+  const analyzeStyle = useAction(api.analyze.analyzeReferenceStyle);
+  const generatePromptAction = useAction(api.analyze.generatePrompt);
+  const generateImageAction = useAction(api.imagen.generateImage);
+  const removeBackgroundAction = useAction(api.imagen.removeBackground);
+
+  // --- State ---
   const [referencePreview, setReferencePreview] = useState<string | null>(null);
   const [productPreview, setProductPreview] = useState<string | null>(null);
+  const [productBase64, setProductBase64] = useState<string | null>(null);
   const [analyzingReference, setAnalyzingReference] = useState(false);
   const [generating, setGenerating] = useState(false);
-  const [generationSettings, setGenerationSettings] = useState({
-    type: "main" as "main" | "carousel" | "rich",
-    slot: 1,
+  const [removingBg, setRemovingBg] = useState(false);
+  const [carouselCount, setCarouselCount] = useState(5);
+  const [slideProductImages, setSlideProductImages] = useState<
+    Record<number, string | null>
+  >({});
+  const [activeSlot, setActiveSlot] = useState(1);
+  const [generationSettings, setGenerationSettings] = useState<{
+    type: "main" | "carousel" | "rich";
+    utp: string;
+    instructions: string;
+  }>({
+    type: "main",
     utp: "",
     instructions: "",
   });
+  const [canvasImageBase64, setCanvasImageBase64] = useState<string | null>(
+    null
+  );
+  const [canvasTextBlocks, setCanvasTextBlocks] = useState<object[]>([]);
+  const [activeImageId, setActiveImageId] = useState<
+    Id<"generatedImages"> | null
+  >(null);
 
-  const handleFileUpload = async (
-    e: React.ChangeEvent<HTMLInputElement>,
-    type: "reference" | "product"
+  // Sync carouselCount from project when it loads
+  useEffect(() => {
+    if (project?.carouselCount != null) {
+      setCarouselCount(project.carouselCount);
+    }
+  }, [project?.carouselCount]);
+
+  // --- Helpers ---
+  const fileToBase64 = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const result = reader.result as string;
+        resolve(result.split(",")[1]);
+      };
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+  };
+
+  // --- Handlers ---
+  const handleReferenceUpload = async (
+    e: React.ChangeEvent<HTMLInputElement>
   ) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    // Show preview
+    // Set preview
     const reader = new FileReader();
     reader.onload = (event) => {
-      const base64 = event.target?.result as string;
-      if (type === "reference") {
-        setReferencePreview(base64);
-      } else {
-        setProductPreview(base64);
-      }
+      setReferencePreview(event.target?.result as string);
     };
     reader.readAsDataURL(file);
 
@@ -76,17 +119,9 @@ export default function ProjectPage() {
       body: file,
     });
     const { storageId } = await result.json();
+    await setReferenceImage({ id: projectId, referenceImageId: storageId });
 
-    if (type === "reference") {
-      await setReferenceImage({ id: projectId, referenceImageId: storageId });
-      // Analyze style
-      await analyzeReferenceStyleFromFile(file);
-    } else {
-      await setProductImage({ id: projectId, productImageId: storageId });
-    }
-  };
-
-  const analyzeReferenceStyleFromFile = async (file: File) => {
+    // Analyze style
     setAnalyzingReference(true);
     try {
       const base64 = await fileToBase64(file);
@@ -102,19 +137,69 @@ export default function ProjectPage() {
     }
   };
 
-  const fileToBase64 = (file: File): Promise<string> => {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => {
-        const result = reader.result as string;
-        resolve(result.split(",")[1]);
-      };
-      reader.onerror = reject;
-      reader.readAsDataURL(file);
+  const handleProductUpload = async (
+    e: React.ChangeEvent<HTMLInputElement>
+  ) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = async (event) => {
+      const dataUrl = event.target?.result as string;
+      setProductPreview(dataUrl);
+      const b64 = dataUrl.split(",")[1];
+      setProductBase64(b64);
+    };
+    reader.readAsDataURL(file);
+
+    // Upload to Convex storage
+    const uploadUrl = await generateUploadUrl();
+    const result = await fetch(uploadUrl, {
+      method: "POST",
+      headers: { "Content-Type": file.type },
+      body: file,
     });
+    const { storageId } = await result.json();
+    await setProductImage({ id: projectId, productImageId: storageId });
   };
 
-  const handleGenerate = async () => {
+  const handleRemoveProductBg = async () => {
+    if (!productBase64) return;
+    setRemovingBg(true);
+    try {
+      const cleanedBase64 = await removeBackgroundAction({
+        imageBase64: productBase64,
+      });
+      setProductPreview(`data:image/png;base64,${cleanedBase64}`);
+      setProductBase64(cleanedBase64);
+
+      // Re-upload cleaned image
+      const blob = base64ToBlob(cleanedBase64, "image/png");
+      const uploadUrl = await generateUploadUrl();
+      const result = await fetch(uploadUrl, {
+        method: "POST",
+        headers: { "Content-Type": "image/png" },
+        body: blob,
+      });
+      const { storageId } = await result.json();
+      await setProductImage({ id: projectId, productImageId: storageId });
+    } catch (error) {
+      console.error("BgRemove error:", error);
+    } finally {
+      setRemovingBg(false);
+    }
+  };
+
+  const base64ToBlob = (base64: string, mimeType: string): Blob => {
+    const byteCharacters = atob(base64);
+    const byteNumbers = new Array(byteCharacters.length);
+    for (let i = 0; i < byteCharacters.length; i++) {
+      byteNumbers[i] = byteCharacters.charCodeAt(i);
+    }
+    return new Blob([new Uint8Array(byteNumbers)], { type: mimeType });
+  };
+
+  const handleGenerate = async (slot?: number) => {
     if (!project?.referenceImageId || !project?.productImageId) {
       alert("Загрузите референс и фото товара");
       return;
@@ -124,25 +209,66 @@ export default function ProjectPage() {
       return;
     }
 
+    const targetSlot =
+      slot ?? (generationSettings.type === "carousel" ? activeSlot : 1);
+
+    const sheetsData = project.sheetsData as
+      | Array<{ slot?: number; heading?: string; texts?: string[]; notes?: string }>
+      | null
+      | undefined;
+    const slideData = sheetsData
+      ? (sheetsData.find((s) => s.slot === targetSlot) ?? sheetsData[0])
+      : undefined;
+
     setGenerating(true);
     try {
-      const genData = await generatePrompt({
+      // Generate prompt
+      const genData = await generatePromptAction({
         styleAnalysis: project.styleAnalysis,
         projectName: project.name,
         type: generationSettings.type,
-        slot: generationSettings.slot,
+        slot: targetSlot,
         utp: generationSettings.utp,
         instructions: generationSettings.instructions,
+        slideData,
       });
 
-      await createImage({
+      // Create DB record
+      const imageDbId = await createImage({
         projectId,
         type: generationSettings.type,
-        slot: generationSettings.slot,
-        prompt: genData.prompt,
-        styleNotes: genData.style_notes,
-        suggestedText: genData.suggested_text,
+        slot: targetSlot,
+        prompt: genData.prompt ?? "",
+        styleNotes: genData.style_notes ?? "",
+        suggestedText: genData.suggested_text ?? "",
       });
+
+      // Generate image via Imagen
+      const imageBase64 = await generateImageAction({ prompt: genData.prompt });
+
+      // Upload generated image to Convex storage
+      const blob = base64ToBlob(imageBase64, "image/png");
+      const uploadUrl = await generateUploadUrl();
+      const uploadResult = await fetch(uploadUrl, {
+        method: "POST",
+        headers: { "Content-Type": "image/png" },
+        body: blob,
+      });
+      const { storageId } = await uploadResult.json();
+
+      // Update DB record with image and text layers
+      await updateImageData({
+        id: imageDbId,
+        imageId: storageId,
+        textLayers: genData.textBlocks ?? [],
+      });
+
+      // Update canvas state
+      setCanvasImageBase64(imageBase64);
+      setCanvasTextBlocks(
+        Array.isArray(genData.textBlocks) ? genData.textBlocks : []
+      );
+      setActiveImageId(imageDbId);
     } catch (error) {
       console.error("Generation error:", error);
     } finally {
@@ -150,70 +276,121 @@ export default function ProjectPage() {
     }
   };
 
-  const clearReference = () => {
-    setReferencePreview(null);
+  const handleGenerateAll = async () => {
+    for (let slot = 1; slot <= carouselCount; slot++) {
+      await handleGenerate(slot);
+    }
   };
 
-  const clearProduct = () => {
-    setProductPreview(null);
+  const saveTextLayers = useCallback(
+    (json: object) => {
+      if (!activeImageId) return;
+      updateImageData({ id: activeImageId, textLayers: json }).catch(
+        console.error
+      );
+    },
+    [activeImageId, updateImageData]
+  );
+
+  const handleThumbnailClick = (
+    img: NonNullable<typeof generatedImages>[number]
+  ) => {
+    if (!img._id) return;
+    setCanvasTextBlocks((img.textLayers as object[]) ?? []);
+    setActiveImageId(img._id);
+    // Note: actual image pixel data would need to be re-fetched via URL.
+    // For MVP: canvasImageBase64 stays as last generated image.
   };
 
-  if (!project)
+  const handleSlideImageUpload = (
+    slot: number,
+    base64: string,
+    _file: File
+  ) => {
+    setSlideProductImages((prev) => ({ ...prev, [slot]: base64 }));
+  };
+
+  // --- Derived ---
+  const styleAnalysis = project?.styleAnalysis as
+    | {
+        style?: string;
+        colors?: string[];
+        utp_blocks?: string[];
+      }
+    | null
+    | undefined;
+
+  const sheetsDataArray = project?.sheetsData as
+    | Array<unknown>
+    | null
+    | undefined;
+
+  if (project === undefined) {
     return (
       <div className="h-screen flex items-center justify-center text-gray-500">
         Загрузка...
       </div>
     );
+  }
 
-  const styleAnalysis = project.styleAnalysis as {
-    style?: string;
-    colors?: string[];
-    utp_blocks?: string[];
-  } | null;
+  if (project === null) {
+    return (
+      <div className="h-screen flex items-center justify-center text-gray-500">
+        Проект не найден
+      </div>
+    );
+  }
 
   return (
-    <div className="h-screen flex bg-gray-50">
-      {/* Left Panel - Controls */}
-      <div className="w-80 bg-white border-r border-gray-200 flex flex-col">
+    <div className="h-screen flex bg-gray-50 overflow-hidden">
+      {/* ===== LEFT PANEL ===== */}
+      <div className="w-80 bg-white border-r border-gray-200 flex flex-col flex-shrink-0">
         {/* Header */}
-        <div className="border-b border-gray-200 px-4 py-3 flex items-center gap-2">
+        <div className="border-b border-gray-200 px-4 py-3 flex items-center gap-2 flex-shrink-0">
           <button
             onClick={() => router.push("/")}
             className="p-1.5 hover:bg-gray-100 rounded transition-colors"
           >
             <ChevronLeft className="w-5 h-5 text-gray-600" />
           </button>
-          <div className="flex-1">
-            <h2 className="font-semibold text-gray-900 text-sm">
+          <div className="flex-1 min-w-0">
+            <h2 className="font-semibold text-gray-900 text-sm truncate">
               {project.name}
             </h2>
           </div>
         </div>
 
-        {/* Scrollable Content */}
-        <div className="flex-1 overflow-auto">
-          <div className="p-4 space-y-6">
-            {/* Reference Upload */}
+        {/* Scrollable content */}
+        <div className="flex-1 overflow-y-auto">
+          <div className="p-4 space-y-5">
+            {/* Sheets Import */}
+            <SheetsImport
+              projectId={projectId}
+              currentUrl={project.sheetsUrl}
+              slidesCount={
+                sheetsDataArray != null ? sheetsDataArray.length : undefined
+              }
+            />
+
+            {/* Reference Image Upload */}
             <div>
               <label className="block text-xs font-semibold text-gray-700 mb-2 uppercase tracking-wide">
                 Референс инфографики
               </label>
 
               {!referencePreview && !project.referenceImageId ? (
-                <label className="block border-2 border-dashed border-gray-300 rounded-lg p-6 text-center cursor-pointer hover:border-blue-500 hover:bg-blue-50 transition-all">
+                <label className="block border-2 border-dashed border-gray-300 rounded-lg p-5 text-center cursor-pointer hover:border-blue-500 hover:bg-blue-50 transition-all">
                   <input
                     type="file"
                     accept="image/*"
-                    onChange={(e) => handleFileUpload(e, "reference")}
+                    onChange={handleReferenceUpload}
                     className="hidden"
                   />
-                  <Upload className="w-8 h-8 text-gray-400 mx-auto mb-2" />
+                  <Upload className="w-7 h-7 text-gray-400 mx-auto mb-1.5" />
                   <p className="text-sm font-medium text-gray-700">
                     Загрузить референс
                   </p>
-                  <p className="text-xs text-gray-500 mt-1">
-                    PNG, JPG до 10MB
-                  </p>
+                  <p className="text-xs text-gray-500 mt-1">PNG, JPG до 10MB</p>
                 </label>
               ) : (
                 <div className="space-y-3">
@@ -225,7 +402,7 @@ export default function ProjectPage() {
                         className="w-full rounded-lg border border-gray-200"
                       />
                       <button
-                        onClick={clearReference}
+                        onClick={() => setReferencePreview(null)}
                         className="absolute top-2 right-2 p-1.5 bg-white rounded-md shadow-sm opacity-0 group-hover:opacity-100 transition-opacity"
                       >
                         <X className="w-4 h-4 text-gray-600" />
@@ -235,41 +412,44 @@ export default function ProjectPage() {
 
                   {analyzingReference && (
                     <div className="flex items-center gap-2 text-xs text-blue-600 bg-blue-50 p-3 rounded-lg">
-                      <RefreshCw className="w-4 h-4 animate-spin" />
+                      <RefreshCw className="w-4 h-4 animate-spin flex-shrink-0" />
                       Анализирую стиль...
                     </div>
                   )}
 
-                  {styleAnalysis && (
+                  {styleAnalysis && !analyzingReference && (
                     <div className="bg-gradient-to-br from-purple-50 to-pink-50 p-3 rounded-lg border border-purple-200">
                       <div className="flex items-center gap-2 mb-2">
-                        <Sparkles className="w-4 h-4 text-purple-600" />
+                        <Sparkles className="w-4 h-4 text-purple-600 flex-shrink-0" />
                         <span className="text-xs font-semibold text-purple-900">
                           Стиль распознан
                         </span>
                       </div>
-                      <div className="space-y-2 text-xs text-purple-800">
-                        <div>
-                          <span className="font-medium">Стиль:</span>{" "}
-                          {styleAnalysis.style}
-                        </div>
-                        {styleAnalysis.colors && (
+                      <div className="space-y-1.5 text-xs text-purple-800">
+                        {styleAnalysis.style && (
                           <div>
-                            <span className="font-medium">Цвета:</span>
-                            <div className="flex gap-1 mt-1">
-                              {styleAnalysis.colors
-                                .slice(0, 5)
-                                .map((color, i) => (
-                                  <div
-                                    key={i}
-                                    className="w-6 h-6 rounded border border-white shadow-sm"
-                                    style={{ backgroundColor: color }}
-                                    title={color}
-                                  />
-                                ))}
-                            </div>
+                            <span className="font-medium">Стиль:</span>{" "}
+                            {styleAnalysis.style}
                           </div>
                         )}
+                        {styleAnalysis.colors &&
+                          styleAnalysis.colors.length > 0 && (
+                            <div>
+                              <span className="font-medium">Цвета:</span>
+                              <div className="flex gap-1 mt-1 flex-wrap">
+                                {styleAnalysis.colors
+                                  .slice(0, 6)
+                                  .map((color, i) => (
+                                    <div
+                                      key={i}
+                                      className="w-5 h-5 rounded border border-white shadow-sm"
+                                      style={{ backgroundColor: color }}
+                                      title={color}
+                                    />
+                                  ))}
+                              </div>
+                            </div>
+                          )}
                         {styleAnalysis.utp_blocks &&
                           styleAnalysis.utp_blocks.length > 0 && (
                             <div>
@@ -280,9 +460,7 @@ export default function ProjectPage() {
                                 {styleAnalysis.utp_blocks
                                   .slice(0, 3)
                                   .map((utp, i) => (
-                                    <li key={i} className="text-xs">
-                                      &#8226; {utp}
-                                    </li>
+                                    <li key={i}>&#8226; {utp}</li>
                                   ))}
                               </ul>
                             </div>
@@ -290,52 +468,100 @@ export default function ProjectPage() {
                       </div>
                     </div>
                   )}
+
+                  {/* Allow re-uploading when already loaded from DB but no local preview */}
+                  {!referencePreview && project.referenceImageId && (
+                    <label className="block border border-dashed border-gray-300 rounded px-3 py-2 text-center cursor-pointer hover:border-blue-400 transition-colors">
+                      <input
+                        type="file"
+                        accept="image/*"
+                        onChange={handleReferenceUpload}
+                        className="hidden"
+                      />
+                      <span className="text-xs text-gray-500">
+                        Заменить референс
+                      </span>
+                    </label>
+                  )}
                 </div>
               )}
             </div>
 
-            {/* Product Upload */}
+            {/* Product Image Upload */}
             <div>
               <label className="block text-xs font-semibold text-gray-700 mb-2 uppercase tracking-wide">
                 Фото товара
               </label>
 
               {!productPreview && !project.productImageId ? (
-                <label className="block border-2 border-dashed border-gray-300 rounded-lg p-6 text-center cursor-pointer hover:border-blue-500 hover:bg-blue-50 transition-all">
+                <label className="block border-2 border-dashed border-gray-300 rounded-lg p-5 text-center cursor-pointer hover:border-blue-500 hover:bg-blue-50 transition-all">
                   <input
                     type="file"
                     accept="image/*"
-                    onChange={(e) => handleFileUpload(e, "product")}
+                    onChange={handleProductUpload}
                     className="hidden"
                   />
-                  <Image className="w-8 h-8 text-gray-400 mx-auto mb-2" />
+                  <Upload className="w-7 h-7 text-gray-400 mx-auto mb-1.5" />
                   <p className="text-sm font-medium text-gray-700">
                     Загрузить товар
                   </p>
                   <p className="text-xs text-gray-500 mt-1">PNG без фона</p>
                 </label>
               ) : (
-                <div className="relative group">
+                <div className="space-y-2">
                   {productPreview && (
-                    <>
+                    <div className="relative group">
                       <img
                         src={productPreview}
                         alt="Product"
                         className="w-full rounded-lg border border-gray-200 bg-gray-50"
                       />
                       <button
-                        onClick={clearProduct}
+                        onClick={() => {
+                          setProductPreview(null);
+                          setProductBase64(null);
+                        }}
                         className="absolute top-2 right-2 p-1.5 bg-white rounded-md shadow-sm opacity-0 group-hover:opacity-100 transition-opacity"
                       >
                         <X className="w-4 h-4 text-gray-600" />
                       </button>
-                    </>
+                    </div>
+                  )}
+
+                  {/* Bg Removal button for product */}
+                  {productBase64 && (
+                    <button
+                      onClick={handleRemoveProductBg}
+                      disabled={removingBg}
+                      className="w-full py-1.5 border border-purple-300 text-purple-700 rounded-md text-xs font-medium hover:bg-purple-50 disabled:opacity-50 flex items-center justify-center gap-1.5 transition-colors"
+                    >
+                      {removingBg ? (
+                        <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                      ) : (
+                        <Scissors className="w-3.5 h-3.5" />
+                      )}
+                      {removingBg ? "Очищаю фон..." : "Очистить фон товара"}
+                    </button>
+                  )}
+
+                  {!productPreview && project.productImageId && (
+                    <label className="block border border-dashed border-gray-300 rounded px-3 py-2 text-center cursor-pointer hover:border-blue-400 transition-colors">
+                      <input
+                        type="file"
+                        accept="image/*"
+                        onChange={handleProductUpload}
+                        className="hidden"
+                      />
+                      <span className="text-xs text-gray-500">
+                        Заменить фото товара
+                      </span>
+                    </label>
                   )}
                 </div>
               )}
             </div>
 
-            {/* Type Selection */}
+            {/* Type Selector */}
             <div>
               <label className="block text-xs font-semibold text-gray-700 mb-2 uppercase tracking-wide">
                 Тип изображения
@@ -354,10 +580,10 @@ export default function ProjectPage() {
                     <button
                       key={type.id}
                       onClick={() =>
-                        setGenerationSettings({
-                          ...generationSettings,
+                        setGenerationSettings((prev) => ({
+                          ...prev,
                           type: type.id,
-                        })
+                        }))
                       }
                       className={`p-2.5 rounded-md border transition-all text-xs font-medium ${
                         isActive
@@ -373,28 +599,40 @@ export default function ProjectPage() {
               </div>
             </div>
 
-            {/* Carousel Slot */}
+            {/* Carousel Settings */}
             {generationSettings.type === "carousel" && (
-              <div>
-                <label className="block text-xs font-semibold text-gray-700 mb-2 uppercase tracking-wide">
-                  Номер слайда (1-30)
-                </label>
-                <input
-                  type="number"
-                  min="1"
-                  max="30"
-                  value={generationSettings.slot}
-                  onChange={(e) =>
-                    setGenerationSettings({
-                      ...generationSettings,
-                      slot: Math.max(
-                        1,
-                        Math.min(30, parseInt(e.target.value) || 1)
-                      ),
-                    })
-                  }
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              <div className="space-y-3">
+                <CarouselSettings
+                  projectId={projectId}
+                  carouselCount={carouselCount}
+                  onCountChange={setCarouselCount}
+                  slideProductImages={slideProductImages}
+                  onSlideImageUpload={handleSlideImageUpload}
                 />
+
+                {/* Active slot selector for single generate */}
+                <div>
+                  <label className="block text-xs font-semibold text-gray-700 mb-1.5 uppercase tracking-wide">
+                    Активный слайд для генерации
+                  </label>
+                  <div className="flex flex-wrap gap-1">
+                    {Array.from({ length: carouselCount }, (_, i) => i + 1).map(
+                      (slot) => (
+                        <button
+                          key={slot}
+                          onClick={() => setActiveSlot(slot)}
+                          className={`w-7 h-7 rounded text-xs font-medium border transition-all ${
+                            activeSlot === slot
+                              ? "border-blue-500 bg-blue-500 text-white"
+                              : "border-gray-200 text-gray-700 hover:border-blue-300"
+                          }`}
+                        >
+                          {slot}
+                        </button>
+                      )
+                    )}
+                  </div>
+                </div>
               </div>
             )}
 
@@ -407,10 +645,10 @@ export default function ProjectPage() {
                 type="text"
                 value={generationSettings.utp}
                 onChange={(e) =>
-                  setGenerationSettings({
-                    ...generationSettings,
+                  setGenerationSettings((prev) => ({
+                    ...prev,
                     utp: e.target.value,
-                  })
+                  }))
                 }
                 placeholder="Например: Бесплатная доставка"
                 className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
@@ -425,23 +663,26 @@ export default function ProjectPage() {
               <textarea
                 value={generationSettings.instructions}
                 onChange={(e) =>
-                  setGenerationSettings({
-                    ...generationSettings,
+                  setGenerationSettings((prev) => ({
+                    ...prev,
                     instructions: e.target.value,
-                  })
+                  }))
                 }
                 placeholder="Особые требования..."
                 rows={3}
                 className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
               />
             </div>
+
+            {/* BgRemover - standalone tool */}
+            <BgRemover />
           </div>
         </div>
 
-        {/* Generate Button */}
-        <div className="border-t border-gray-200 p-4">
+        {/* Bottom action area */}
+        <div className="border-t border-gray-200 p-4 flex-shrink-0 space-y-2">
           <button
-            onClick={handleGenerate}
+            onClick={() => handleGenerate()}
             disabled={
               !project.referenceImageId ||
               !project.productImageId ||
@@ -457,110 +698,78 @@ export default function ProjectPage() {
             ) : (
               <>
                 <Wand2 className="w-4 h-4" />
-                Сгенерировать в стиле референса
+                Сгенерировать
               </>
             )}
           </button>
 
-          {!project.referenceImageId && (
-            <div className="flex items-start gap-2 mt-3 text-xs text-amber-700 bg-amber-50 p-2 rounded">
+          {generationSettings.type === "carousel" && (
+            <button
+              onClick={handleGenerateAll}
+              disabled={
+                !project.referenceImageId ||
+                !project.productImageId ||
+                generating
+              }
+              className="w-full py-2 border border-blue-500 text-blue-700 rounded-lg font-medium hover:bg-blue-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-sm"
+            >
+              Сгенерировать все {carouselCount} слайдов
+            </button>
+          )}
+
+          {(!project.referenceImageId || !project.productImageId) && (
+            <div className="flex items-start gap-2 text-xs text-amber-700 bg-amber-50 p-2 rounded">
               <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
-              <span>
-                Загрузите референс и фото товара для генерации
-              </span>
+              <span>Загрузите референс и фото товара для генерации</span>
             </div>
           )}
         </div>
       </div>
 
-      {/* Right Panel - Results */}
-      <div className="flex-1 overflow-auto">
-        <div className="p-6">
-          <div className="max-w-4xl mx-auto">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4">
-              Сгенерированные изображения
-            </h3>
-
-            {!generatedImages || generatedImages.length === 0 ? (
-              <div className="border-2 border-dashed border-gray-300 rounded-lg p-12 text-center">
-                <Image className="w-16 h-16 text-gray-400 mx-auto mb-4" />
-                <p className="text-gray-600 font-medium mb-1">
-                  Пока нет изображений
-                </p>
-                <p className="text-sm text-gray-500">
-                  Загрузите референс, фото товара и нажмите
-                  &quot;Сгенерировать&quot;
-                </p>
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                {generatedImages.map((img) => (
-                  <div
-                    key={img._id}
-                    className="bg-white border border-gray-200 rounded-lg overflow-hidden hover:shadow-lg transition-shadow"
-                  >
-                    {/* Details */}
-                    <div className="p-4 space-y-3">
-                      <div className="flex items-center justify-between">
-                        <span className="text-xs font-semibold px-2 py-1 rounded-full bg-blue-100 text-blue-700">
-                          {img.type === "main"
-                            ? "Главное фото"
-                            : img.type === "carousel"
-                              ? `Карусель #${img.slot}`
-                              : "Рич-контент"}
-                        </span>
-                        <span className="text-xs text-gray-500">
-                          {new Date(img.createdAt).toLocaleTimeString("ru")}
-                        </span>
-                      </div>
-
-                      {img.styleNotes && (
-                        <div className="text-xs text-gray-700 bg-gray-50 p-2 rounded">
-                          <div className="font-medium mb-1">
-                            Применённый стиль:
-                          </div>
-                          <div>{img.styleNotes}</div>
-                        </div>
-                      )}
-
-                      {img.suggestedText && (
-                        <div className="text-xs text-gray-700 bg-purple-50 p-2 rounded border border-purple-100">
-                          <div className="font-medium mb-1">
-                            Текст для инфографики:
-                          </div>
-                          <div className="whitespace-pre-line">
-                            {img.suggestedText}
-                          </div>
-                        </div>
-                      )}
-
-                      {img.prompt && (
-                        <div className="text-xs text-gray-700 bg-green-50 p-2 rounded border border-green-100">
-                          <div className="font-medium mb-1">Промпт:</div>
-                          <div className="whitespace-pre-line">
-                            {img.prompt}
-                          </div>
-                        </div>
-                      )}
-
-                      {/* Actions */}
-                      <div className="flex gap-2 pt-2">
-                        <button className="flex-1 px-3 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors flex items-center justify-center gap-1.5">
-                          <Eye className="w-4 h-4" />
-                          Просмотр
-                        </button>
-                        <button className="flex-1 px-3 py-2 bg-blue-600 text-white rounded-md text-sm font-medium hover:bg-blue-700 transition-colors flex items-center justify-center gap-1.5">
-                          <Download className="w-4 h-4" />
-                          Скачать
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
+      {/* ===== RIGHT PANEL ===== */}
+      <div className="flex-1 flex flex-col min-w-0">
+        {/* Canvas editor fills available space */}
+        <div className="flex-1 min-h-0">
+          <CanvasEditor
+            imageBase64={canvasImageBase64}
+            textBlocks={canvasTextBlocks as Array<{
+              text: string;
+              x: number;
+              y: number;
+              fontSize: number;
+              fontFamily: string;
+              fontWeight?: string;
+              color?: string;
+            }>}
+            onSaveTextLayers={saveTextLayers}
+          />
         </div>
+
+        {/* Thumbnail strip */}
+        {generatedImages && generatedImages.length > 0 && (
+          <div className="flex-shrink-0 border-t border-gray-200 bg-white px-4 py-2 flex gap-2 overflow-x-auto">
+            {generatedImages.map((img, idx) => (
+              <button
+                key={img._id}
+                onClick={() => handleThumbnailClick(img)}
+                className={`flex-shrink-0 w-14 h-14 rounded-md border-2 flex items-center justify-center text-xs font-semibold transition-all ${
+                  activeImageId === img._id
+                    ? "border-blue-500 bg-blue-50 text-blue-700"
+                    : "border-gray-200 bg-gray-50 text-gray-600 hover:border-blue-300"
+                }`}
+                title={
+                  img.type === "carousel"
+                    ? `Слайд ${img.slot}`
+                    : img.type === "main"
+                    ? "Главное"
+                    : "Рич"
+                }
+              >
+                {img.type === "carousel" ? img.slot : idx + 1}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
