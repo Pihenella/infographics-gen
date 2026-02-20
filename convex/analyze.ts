@@ -1,0 +1,146 @@
+"use node";
+
+import { action } from "./_generated/server";
+import { v } from "convex/values";
+
+export const analyzeReferenceStyle = action({
+  args: {
+    imageBase64: v.string(),
+    mediaType: v.string(),
+  },
+  handler: async (_ctx, args) => {
+    const apiKey = process.env.ANTHROPIC_API_KEY;
+    if (!apiKey) throw new Error("ANTHROPIC_API_KEY not set");
+
+    const response = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify({
+        model: "claude-sonnet-4-20250514",
+        max_tokens: 2000,
+        messages: [
+          {
+            role: "user",
+            content: [
+              {
+                type: "image",
+                source: {
+                  type: "base64",
+                  media_type: args.mediaType,
+                  data: args.imageBase64,
+                },
+              },
+              {
+                type: "text",
+                text: `Проанализируй эту инфографику для товара на маркетплейсе. Опиши детально:
+
+1. Композицию и layout (расположение элементов, сетка)
+2. Цветовую схему (основные и акцентные цвета, hex коды)
+3. Типографику (шрифты, размеры, начертания)
+4. Стиль графики (иконки, формы, иллюстрации)
+5. Текстовые блоки (какие УТП, как оформлены)
+6. Фоновые эффекты (градиенты, тени, текстуры)
+7. Общий стиль (минимализм, максимализм, премиум и т.д.)
+
+Верни JSON формата:
+{
+  "style": "краткое название стиля",
+  "colors": ["#hex1", "#hex2"],
+  "layout": "описание композиции",
+  "typography": "описание типографики",
+  "graphics": "описание графических элементов",
+  "effects": "описание эффектов",
+  "utp_blocks": ["УТП 1", "УТП 2"],
+  "prompt_template": "детальный промпт для воссоздания этого стиля"
+}`,
+              },
+            ],
+          },
+        ],
+      }),
+    });
+
+    const data = await response.json();
+    const textContent =
+      data.content?.find((item: { type: string }) => item.type === "text")
+        ?.text || "";
+    const jsonMatch = textContent.match(/\{[\s\S]*\}/);
+
+    if (jsonMatch) {
+      return JSON.parse(jsonMatch[0]);
+    }
+    throw new Error("Failed to parse style analysis from API response");
+  },
+});
+
+export const generatePrompt = action({
+  args: {
+    styleAnalysis: v.any(),
+    projectName: v.string(),
+    type: v.union(v.literal("main"), v.literal("carousel"), v.literal("rich")),
+    slot: v.number(),
+    utp: v.string(),
+    instructions: v.string(),
+  },
+  handler: async (_ctx, args) => {
+    const apiKey = process.env.ANTHROPIC_API_KEY;
+    if (!apiKey) throw new Error("ANTHROPIC_API_KEY not set");
+
+    const typeLabel =
+      args.type === "main"
+        ? "Главное фото"
+        : args.type === "carousel"
+          ? `Слайд карусели #${args.slot}`
+          : "Рич-контент";
+
+    const response = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify({
+        model: "claude-sonnet-4-20250514",
+        max_tokens: 2000,
+        messages: [
+          {
+            role: "user",
+            content: `Создай промпт для генерации инфографики товара, используя стиль из анализа:
+
+Стиль референса:
+${JSON.stringify(args.styleAnalysis, null, 2)}
+
+Товар: ${args.projectName}
+Тип изображения: ${typeLabel}
+УТП: ${args.utp || "не указано"}
+Дополнительно: ${args.instructions || "нет"}
+
+Верни JSON:
+{
+  "prompt": "детальный промпт на английском",
+  "negative_prompt": "что исключить",
+  "style_notes": "какие ключевые элементы стиля применены",
+  "suggested_text": "текст на русском для инфографики"
+}`,
+          },
+        ],
+      }),
+    });
+
+    const data = await response.json();
+    const textContent =
+      data.content?.find((item: { type: string }) => item.type === "text")
+        ?.text || "";
+    const jsonMatch = textContent.match(/\{[\s\S]*\}/);
+
+    if (jsonMatch) {
+      return JSON.parse(jsonMatch[0]);
+    }
+    throw new Error("Failed to parse generation prompt from API response");
+  },
+});
