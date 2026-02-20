@@ -85,6 +85,7 @@ export const generatePrompt = action({
     slot: v.number(),
     utp: v.string(),
     instructions: v.string(),
+    slideData: v.optional(v.any()),
   },
   handler: async (_ctx, args) => {
     const apiKey = process.env.ANTHROPIC_API_KEY;
@@ -96,6 +97,15 @@ export const generatePrompt = action({
         : args.type === "carousel"
           ? `Слайд карусели #${args.slot}`
           : "Рич-контент";
+
+    const slideContext = args.slideData
+      ? `
+Данные из ТЗ для этого слайда:
+Заголовок: ${args.slideData.heading}
+Тексты: ${args.slideData.texts?.join(", ")}
+Дизайн-комментарии: ${args.slideData.notes}
+`
+      : "";
 
     const response = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
@@ -110,7 +120,7 @@ export const generatePrompt = action({
         messages: [
           {
             role: "user",
-            content: `Создай промпт для генерации инфографики товара, используя стиль из анализа:
+            content: `Создай промпт для генерации инфографики товара, используя стиль из анализа.
 
 Стиль референса:
 ${JSON.stringify(args.styleAnalysis, null, 2)}
@@ -119,14 +129,20 @@ ${JSON.stringify(args.styleAnalysis, null, 2)}
 Тип изображения: ${typeLabel}
 УТП: ${args.utp || "не указано"}
 Дополнительно: ${args.instructions || "нет"}
+${slideContext}
 
-Верни JSON:
+Верни JSON (без markdown):
 {
-  "prompt": "детальный промпт на английском",
+  "prompt": "детальный промпт на английском для Imagen 4 Ultra",
   "negative_prompt": "что исключить",
   "style_notes": "какие ключевые элементы стиля применены",
-  "suggested_text": "текст на русском для инфографики"
-}`,
+  "suggested_text": "весь текст на русском для инфографики",
+  "textBlocks": [
+    { "text": "текст блока", "x": 50, "y": 80, "fontSize": 32, "fontFamily": "Inter", "fontWeight": "bold", "color": "#ffffff" }
+  ]
+}
+
+textBlocks — позиции текста на холсте 1000x1000px. Размести 3-6 блоков в логичных местах исходя из типа инфографики.`,
           },
         ],
       }),
