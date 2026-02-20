@@ -1,7 +1,11 @@
 {
   "compilerOptions": {
+    "target": "ES2022",
+    "module": "Node16",
+    "moduleResolution": "Node16",
     "allowJs": true,
     "strict": true,
-    "noEmit": true
+    "noEmit": true,
+    "skipLibCheck": true
   }
 }
