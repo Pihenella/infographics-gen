@@ -62,3 +62,27 @@ export const setProductImage = mutation({
     await ctx.db.patch(args.id, { productImageId: args.productImageId });
   },
 });
+
+export const updateSheetsData = mutation({
+  args: {
+    id: v.id("projects"),
+    sheetsUrl: v.string(),
+    sheetsData: v.any(),
+  },
+  handler: async (ctx, args) => {
+    await ctx.db.patch(args.id, {
+      sheetsUrl: args.sheetsUrl,
+      sheetsData: args.sheetsData,
+    });
+  },
+});
+
+export const updateCarouselCount = mutation({
+  args: {
+    id: v.id("projects"),
+    carouselCount: v.number(),
+  },
+  handler: async (ctx, args) => {
+    await ctx.db.patch(args.id, { carouselCount: args.carouselCount });
+  },
+});

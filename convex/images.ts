@@ -21,6 +21,8 @@ export const create = mutation({
     styleNotes: v.string(),
     suggestedText: v.string(),
     imageId: v.optional(v.id("_storage")),
+    textLayers: v.optional(v.any()),
+    slideProductImageId: v.optional(v.id("_storage")),
   },
   handler: async (ctx, args) => {
     return await ctx.db.insert("generatedImages", {
@@ -45,5 +47,29 @@ export const getImageUrl = query({
   args: { storageId: v.id("_storage") },
   handler: async (ctx, args) => {
     return await ctx.storage.getUrl(args.storageId);
+  },
+});
+
+export const updateImageData = mutation({
+  args: {
+    id: v.id("generatedImages"),
+    imageId: v.optional(v.id("_storage")),
+    textLayers: v.optional(v.any()),
+  },
+  handler: async (ctx, args) => {
+    const { id, ...patch } = args;
+    await ctx.db.patch(id, patch);
+  },
+});
+
+export const setSlideProductImage = mutation({
+  args: {
+    id: v.id("generatedImages"),
+    slideProductImageId: v.id("_storage"),
+  },
+  handler: async (ctx, args) => {
+    await ctx.db.patch(args.id, {
+      slideProductImageId: args.slideProductImageId,
+    });
   },
 });
