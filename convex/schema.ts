@@ -8,6 +8,9 @@ export default defineSchema({
     referenceImageId: v.optional(v.id("_storage")),
     productImageId: v.optional(v.id("_storage")),
     styleAnalysis: v.optional(v.any()),
+    sheetsUrl: v.optional(v.string()),
+    sheetsData: v.optional(v.any()),
+    carouselCount: v.optional(v.number()),
     createdAt: v.number(),
   }),
 
@@ -19,6 +22,8 @@ export default defineSchema({
     styleNotes: v.string(),
     suggestedText: v.string(),
     imageId: v.optional(v.id("_storage")),
+    textLayers: v.optional(v.any()),
+    slideProductImageId: v.optional(v.id("_storage")),
     createdAt: v.number(),
   }).index("by_project", ["projectId"]),
 });
