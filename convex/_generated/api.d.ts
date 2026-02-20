@@ -11,6 +11,7 @@
 import type * as analyze from "../analyze.js";
 import type * as images from "../images.js";
 import type * as projects from "../projects.js";
+import type * as sheets from "../sheets.js";
 
 import type {
   ApiFromModules,
@@ -22,6 +23,7 @@ declare const fullApi: ApiFromModules<{
   analyze: typeof analyze;
   images: typeof images;
   projects: typeof projects;
+  sheets: typeof sheets;
 }>;
 
 /**
