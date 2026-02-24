@@ -77,6 +77,9 @@ export default function ProjectPageClient() {
   const [activeImageId, setActiveImageId] = useState<
     Id<"generatedImages"> | null
   >(null);
+  const [analysisError, setAnalysisError] = useState<string | null>(null);
+  const [bgRemoveError, setBgRemoveError] = useState<string | null>(null);
+  const [generateError, setGenerateError] = useState<string | null>(null);
 
   // Sync carouselCount from project when it loads
   useEffect(() => {
@@ -124,6 +127,7 @@ export default function ProjectPageClient() {
 
     // Analyze style
     setAnalyzingReference(true);
+    setAnalysisError(null);
     try {
       const base64 = await fileToBase64(file);
       const analysis = await analyzeStyle({
@@ -133,6 +137,9 @@ export default function ProjectPageClient() {
       await updateStyleAnalysis({ id: projectId, styleAnalysis: analysis });
     } catch (error) {
       console.error("Analysis error:", error);
+      setAnalysisError(
+        error instanceof Error ? error.message : "Ошибка анализа стиля"
+      );
     } finally {
       setAnalyzingReference(false);
     }
@@ -167,6 +174,7 @@ export default function ProjectPageClient() {
   const handleRemoveProductBg = async () => {
     if (!productBase64) return;
     setRemovingBg(true);
+    setBgRemoveError(null);
     try {
       const cleanedBase64 = await removeBackgroundAction({
         imageBase64: productBase64,
@@ -186,6 +194,9 @@ export default function ProjectPageClient() {
       await setProductImage({ id: projectId, productImageId: storageId });
     } catch (error) {
       console.error("BgRemove error:", error);
+      setBgRemoveError(
+        error instanceof Error ? error.message : "Ошибка удаления фона"
+      );
     } finally {
       setRemovingBg(false);
     }
@@ -202,11 +213,9 @@ export default function ProjectPageClient() {
 
   const handleGenerate = async (slot?: number) => {
     if (!project?.referenceImageId || !project?.productImageId) {
-      alert("Загрузите референс и фото товара");
       return;
     }
     if (!project.styleAnalysis) {
-      alert("Дождитесь анализа стиля референса");
       return;
     }
 
@@ -222,6 +231,7 @@ export default function ProjectPageClient() {
       : undefined;
 
     setGenerating(true);
+    setGenerateError(null);
     try {
       // Generate prompt
       const genData = await generatePromptAction({
@@ -272,6 +282,9 @@ export default function ProjectPageClient() {
       setActiveImageId(imageDbId);
     } catch (error) {
       console.error("Generation error:", error);
+      setGenerateError(
+        error instanceof Error ? error.message : "Ошибка генерации"
+      );
     } finally {
       setGenerating(false);
     }
@@ -418,6 +431,13 @@ export default function ProjectPageClient() {
                     </div>
                   )}
 
+                  {analysisError && !analyzingReference && (
+                    <div className="flex items-start gap-2 text-xs text-red-700 bg-red-50 p-3 rounded-lg border border-red-200">
+                      <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                      <span>Ошибка анализа: {analysisError}</span>
+                    </div>
+                  )}
+
                   {styleAnalysis && !analyzingReference && (
                     <div className="bg-gradient-to-br from-purple-50 to-pink-50 p-3 rounded-lg border border-purple-200">
                       <div className="flex items-center gap-2 mb-2">
@@ -543,6 +563,13 @@ export default function ProjectPageClient() {
                       )}
                       {removingBg ? "Очищаю фон..." : "Очистить фон товара"}
                     </button>
+                  )}
+
+                  {bgRemoveError && (
+                    <div className="flex items-start gap-2 text-xs text-red-700 bg-red-50 p-2 rounded border border-red-200">
+                      <AlertCircle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
+                      <span>{bgRemoveError}</span>
+                    </div>
                   )}
 
                   {!productPreview && project.productImageId && (
@@ -687,6 +714,7 @@ export default function ProjectPageClient() {
             disabled={
               !project.referenceImageId ||
               !project.productImageId ||
+              !project.styleAnalysis ||
               generating
             }
             className="w-full py-2.5 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 text-sm"
@@ -710,6 +738,7 @@ export default function ProjectPageClient() {
               disabled={
                 !project.referenceImageId ||
                 !project.productImageId ||
+                !project.styleAnalysis ||
                 generating
               }
               className="w-full py-2 border border-blue-500 text-blue-700 rounded-lg font-medium hover:bg-blue-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-sm"
@@ -722,6 +751,20 @@ export default function ProjectPageClient() {
             <div className="flex items-start gap-2 text-xs text-amber-700 bg-amber-50 p-2 rounded">
               <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
               <span>Загрузите референс и фото товара для генерации</span>
+            </div>
+          )}
+
+          {project.referenceImageId && project.productImageId && !project.styleAnalysis && !analyzingReference && (
+            <div className="flex items-start gap-2 text-xs text-amber-700 bg-amber-50 p-2 rounded">
+              <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+              <span>Загрузите (или перезагрузите) референс — нужен анализ стиля</span>
+            </div>
+          )}
+
+          {generateError && (
+            <div className="flex items-start gap-2 text-xs text-red-700 bg-red-50 p-2 rounded border border-red-200">
+              <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+              <span>{generateError}</span>
             </div>
           )}
         </div>

@@ -69,11 +69,11 @@ export const removeBackground = action({
       body: JSON.stringify({
         instances: [
           {
+            prompt: "",
             image: { bytesBase64Encoded: args.imageBase64 },
           },
         ],
         parameters: {
-          sampleCount: 1,
           editConfig: { backgroundRemovalConfig: {} },
         },
       }),
@@ -81,11 +81,12 @@ export const removeBackground = action({
 
     const data = await response.json();
     if (!response.ok) {
-      throw new Error(data.error?.message || "Background removal error");
+      const errMsg = data.error?.message || JSON.stringify(data.error) || "Background removal error";
+      throw new Error(`Vertex AI error (${response.status}): ${errMsg}`);
     }
 
     const base64 = data.predictions?.[0]?.bytesBase64Encoded;
-    if (!base64) throw new Error("No image in background removal response");
+    if (!base64) throw new Error("No image in background removal response: " + JSON.stringify(data));
     return base64;
   },
 });
