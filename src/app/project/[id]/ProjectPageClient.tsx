@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useQuery, useMutation, useAction } from "convex/react";
+import { ConvexError } from "convex/values";
 import nextDynamic from "next/dynamic";
 
 import { api } from "../../../../convex/_generated/api";
@@ -81,6 +82,12 @@ export default function ProjectPageClient() {
   const [bgRemoveError, setBgRemoveError] = useState<string | null>(null);
   const [generateError, setGenerateError] = useState<string | null>(null);
 
+  const getErrorMessage = (error: unknown): string => {
+    if (error instanceof ConvexError) return String(error.data);
+    if (error instanceof Error) return error.message;
+    return String(error);
+  };
+
   // Sync carouselCount from project when it loads
   useEffect(() => {
     if (project?.carouselCount != null) {
@@ -137,9 +144,7 @@ export default function ProjectPageClient() {
       await updateStyleAnalysis({ id: projectId, styleAnalysis: analysis });
     } catch (error) {
       console.error("Analysis error:", error);
-      setAnalysisError(
-        error instanceof Error ? error.message : "Ошибка анализа стиля"
-      );
+      setAnalysisError(getErrorMessage(error));
     } finally {
       setAnalyzingReference(false);
     }
@@ -194,9 +199,7 @@ export default function ProjectPageClient() {
       await setProductImage({ id: projectId, productImageId: storageId });
     } catch (error) {
       console.error("BgRemove error:", error);
-      setBgRemoveError(
-        error instanceof Error ? error.message : "Ошибка удаления фона"
-      );
+      setBgRemoveError(getErrorMessage(error));
     } finally {
       setRemovingBg(false);
     }
@@ -282,9 +285,7 @@ export default function ProjectPageClient() {
       setActiveImageId(imageDbId);
     } catch (error) {
       console.error("Generation error:", error);
-      setGenerateError(
-        error instanceof Error ? error.message : "Ошибка генерации"
-      );
+      setGenerateError(getErrorMessage(error));
     } finally {
       setGenerating(false);
     }

@@ -1,7 +1,7 @@
 "use node";
 
 import { action } from "./_generated/server";
-import { v } from "convex/values";
+import { v, ConvexError } from "convex/values";
 
 export const analyzeReferenceStyle = action({
   args: {
@@ -10,7 +10,7 @@ export const analyzeReferenceStyle = action({
   },
   handler: async (_ctx, args) => {
     const apiKey = process.env.ANTHROPIC_API_KEY;
-    if (!apiKey) throw new Error("ANTHROPIC_API_KEY not set");
+    if (!apiKey) throw new ConvexError("ANTHROPIC_API_KEY not set");
 
     const response = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
@@ -65,6 +65,12 @@ export const analyzeReferenceStyle = action({
     });
 
     const data = await response.json();
+
+    if (!response.ok) {
+      const errMsg = data.error?.message || JSON.stringify(data);
+      throw new ConvexError(`Anthropic API error (${response.status}): ${errMsg}`);
+    }
+
     const textContent =
       data.content?.find((item: { type: string }) => item.type === "text")
         ?.text || "";
@@ -73,7 +79,10 @@ export const analyzeReferenceStyle = action({
     if (jsonMatch) {
       return JSON.parse(jsonMatch[0]);
     }
-    throw new Error("Failed to parse style analysis from API response");
+    throw new ConvexError(
+      "Failed to parse style analysis. API response: " +
+        textContent.slice(0, 500)
+    );
   },
 });
 
@@ -89,7 +98,7 @@ export const generatePrompt = action({
   },
   handler: async (_ctx, args) => {
     const apiKey = process.env.ANTHROPIC_API_KEY;
-    if (!apiKey) throw new Error("ANTHROPIC_API_KEY not set");
+    if (!apiKey) throw new ConvexError("ANTHROPIC_API_KEY not set");
 
     const typeLabel =
       args.type === "main"
@@ -149,6 +158,12 @@ textBlocks — позиции текста на холсте 1000x1000px. Раз
     });
 
     const data = await response.json();
+
+    if (!response.ok) {
+      const errMsg = data.error?.message || JSON.stringify(data);
+      throw new ConvexError(`Anthropic API error (${response.status}): ${errMsg}`);
+    }
+
     const textContent =
       data.content?.find((item: { type: string }) => item.type === "text")
         ?.text || "";
@@ -157,6 +172,9 @@ textBlocks — позиции текста на холсте 1000x1000px. Раз
     if (jsonMatch) {
       return JSON.parse(jsonMatch[0]);
     }
-    throw new Error("Failed to parse generation prompt from API response");
+    throw new ConvexError(
+      "Failed to parse generation prompt. API response: " +
+        textContent.slice(0, 500)
+    );
   },
 });
