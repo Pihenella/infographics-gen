@@ -248,13 +248,14 @@ export default function ProjectPageClient() {
       });
 
       // Create DB record
+      console.log("genData from generatePrompt:", JSON.stringify(genData));
       const imageDbId = await createImage({
         projectId,
         type: generationSettings.type,
-        slot: targetSlot,
-        prompt: genData.prompt ?? "",
-        styleNotes: genData.style_notes ?? "",
-        suggestedText: genData.suggested_text ?? "",
+        slot: Number(targetSlot),
+        prompt: String(genData?.prompt ?? ""),
+        styleNotes: String(genData?.style_notes ?? ""),
+        suggestedText: String(genData?.suggested_text ?? ""),
       });
 
       // Generate image via Imagen

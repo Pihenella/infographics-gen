@@ -1,5 +1,5 @@
 import { query, mutation } from "./_generated/server";
-import { v } from "convex/values";
+import { v, ConvexError } from "convex/values";
 
 export const listByProject = query({
   args: { projectId: v.id("projects") },
@@ -22,10 +22,17 @@ export const create = mutation({
     suggestedText: v.string(),
   },
   handler: async (ctx, args) => {
-    return await ctx.db.insert("generatedImages", {
-      ...args,
-      createdAt: Date.now(),
-    });
+    try {
+      return await ctx.db.insert("generatedImages", {
+        ...args,
+        createdAt: Date.now(),
+      });
+    } catch (e) {
+      throw new ConvexError(
+        "DB insert failed: " + (e instanceof Error ? e.message : String(e)) +
+        " | args: " + JSON.stringify(args)
+      );
+    }
   },
 });
 
