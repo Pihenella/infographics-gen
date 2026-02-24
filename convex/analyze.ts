@@ -76,7 +76,13 @@ export const analyzeReferenceStyle = action({
     const jsonMatch = textContent.match(/\{[\s\S]*\}/);
 
     if (jsonMatch) {
-      return JSON.parse(jsonMatch[0]);
+      try {
+        return JSON.parse(jsonMatch[0]);
+      } catch (e) {
+        throw new ConvexError(
+          "JSON parse error in style analysis: " + jsonMatch[0].slice(0, 300)
+        );
+      }
     }
     throw new ConvexError(
       "Failed to parse style analysis. Response: " + textContent.slice(0, 500)
@@ -167,7 +173,13 @@ textBlocks — позиции текста на холсте 1000x1000px. Раз
     const jsonMatch = textContent.match(/\{[\s\S]*\}/);
 
     if (jsonMatch) {
-      return JSON.parse(jsonMatch[0]);
+      try {
+        return JSON.parse(jsonMatch[0]);
+      } catch (e) {
+        throw new ConvexError(
+          "JSON parse error in generatePrompt: " + jsonMatch[0].slice(0, 300)
+        );
+      }
     }
     throw new ConvexError(
       "Failed to parse generation prompt. Response: " + textContent.slice(0, 500)
