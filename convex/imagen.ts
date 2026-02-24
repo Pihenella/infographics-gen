@@ -69,13 +69,12 @@ export const removeBackground = action({
       body: JSON.stringify({
         instances: [
           {
-            prompt: "",
             image: { bytesBase64Encoded: args.imageBase64 },
           },
         ],
         parameters: {
-          editMode: "product-image",
           sampleCount: 1,
+          editConfig: { backgroundRemovalConfig: {} },
         },
       }),
     });
