@@ -2,39 +2,18 @@
 
 import { action } from "./_generated/server";
 import { v, ConvexError } from "convex/values";
-import { GoogleAuth } from "google-auth-library";
 
-async function getGoogleToken(): Promise<{ token: string; projectId: string }> {
-  const json = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
-  if (!json) throw new ConvexError("GOOGLE_SERVICE_ACCOUNT_JSON not set");
+async function geminiGenerate(parts: object[]): Promise<string> {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) throw new ConvexError("GEMINI_API_KEY not set");
 
-  const credentials = JSON.parse(json);
-  const auth = new GoogleAuth({
-    credentials,
-    scopes: ["https://www.googleapis.com/auth/cloud-platform"],
-  });
-  const client = await auth.getClient();
-  const tokenResponse = await client.getAccessToken();
-  if (!tokenResponse.token) throw new ConvexError("Failed to get Google access token");
-
-  return { token: tokenResponse.token, projectId: credentials.project_id };
-}
-
-async function geminiGenerate(
-  token: string,
-  projectId: string,
-  parts: object[]
-): Promise<string> {
-  const url = `https://us-central1-aiplatform.googleapis.com/v1/projects/${projectId}/locations/us-central1/publishers/google/models/gemini-2.0-flash-001:generateContent`;
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
 
   const response = await fetch(url, {
     method: "POST",
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json",
-    },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      contents: [{ role: "user", parts }],
+      contents: [{ parts }],
       generationConfig: { maxOutputTokens: 2048, temperature: 0.4 },
     }),
   });
@@ -64,9 +43,7 @@ export const analyzeReferenceStyle = action({
     mediaType: v.string(),
   },
   handler: async (_ctx, args) => {
-    const { token, projectId } = await getGoogleToken();
-
-    const text = await geminiGenerate(token, projectId, [
+    const text = await geminiGenerate([
       {
         inlineData: {
           mimeType: args.mediaType,
@@ -119,8 +96,6 @@ export const generatePrompt = action({
     slideData: v.optional(v.any()),
   },
   handler: async (_ctx, args) => {
-    const { token, projectId } = await getGoogleToken();
-
     const typeLabel =
       args.type === "main"
         ? "Главное фото"
@@ -137,7 +112,7 @@ export const generatePrompt = action({
 `
       : "";
 
-    const text = await geminiGenerate(token, projectId, [
+    const text = await geminiGenerate([
       {
         text: `Создай промпт для генерации инфографики товара, используя стиль из анализа.
 
