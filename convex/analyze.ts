@@ -2,61 +2,6 @@
 
 import { action } from "./_generated/server";
 import { v, ConvexError } from "convex/values";
-import { GoogleAuth } from "google-auth-library";
-
-async function getGoogleToken(): Promise<{ token: string; projectId: string }> {
-  const json = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
-  if (!json) throw new ConvexError("GOOGLE_SERVICE_ACCOUNT_JSON not set");
-
-  const credentials = JSON.parse(json);
-  const auth = new GoogleAuth({
-    credentials,
-    scopes: ["https://www.googleapis.com/auth/cloud-platform"],
-  });
-  const client = await auth.getClient();
-  const tokenResponse = await client.getAccessToken();
-  if (!tokenResponse.token) throw new ConvexError("Failed to get Google access token");
-
-  return { token: tokenResponse.token, projectId: credentials.project_id };
-}
-
-async function geminiGenerate(
-  token: string,
-  projectId: string,
-  parts: object[]
-): Promise<string> {
-  const url = `https://us-central1-aiplatform.googleapis.com/v1/projects/${projectId}/locations/us-central1/publishers/google/models/gemini-1.5-flash:generateContent`;
-
-  const response = await fetch(url, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      contents: [{ role: "user", parts }],
-      generationConfig: { maxOutputTokens: 2048, temperature: 0.4 },
-    }),
-  });
-
-  const data = await response.json();
-
-  if (!response.ok) {
-    const errMsg = data.error?.message || JSON.stringify(data);
-    throw new ConvexError(`Gemini API error (${response.status}): ${errMsg}`);
-  }
-
-  const text: string =
-    data.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
-
-  if (!text) {
-    throw new ConvexError(
-      "Empty Gemini response: " + JSON.stringify(data).slice(0, 300)
-    );
-  }
-
-  return text;
-}
 
 export const analyzeReferenceStyle = action({
   args: {
@@ -64,17 +9,34 @@ export const analyzeReferenceStyle = action({
     mediaType: v.string(),
   },
   handler: async (_ctx, args) => {
-    const { token, projectId } = await getGoogleToken();
+    const apiKey = process.env.ANTHROPIC_API_KEY;
+    if (!apiKey) throw new ConvexError("ANTHROPIC_API_KEY not set");
 
-    const text = await geminiGenerate(token, projectId, [
-      {
-        inlineData: {
-          mimeType: args.mediaType,
-          data: args.imageBase64,
-        },
+    const response = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01",
       },
-      {
-        text: `Проанализируй эту инфографику для товара на маркетплейсе. Опиши детально:
+      body: JSON.stringify({
+        model: "claude-sonnet-4-6",
+        max_tokens: 2000,
+        messages: [
+          {
+            role: "user",
+            content: [
+              {
+                type: "image",
+                source: {
+                  type: "base64",
+                  media_type: args.mediaType,
+                  data: args.imageBase64,
+                },
+              },
+              {
+                type: "text",
+                text: `Проанализируй эту инфографику для товара на маркетплейсе. Опиши детально:
 
 1. Композицию и layout (расположение элементов, сетка)
 2. Цветовую схему (основные и акцентные цвета, hex коды)
@@ -95,15 +57,29 @@ export const analyzeReferenceStyle = action({
   "utp_blocks": ["УТП 1", "УТП 2"],
   "prompt_template": "детальный промпт для воссоздания этого стиля"
 }`,
-      },
-    ]);
+              },
+            ],
+          },
+        ],
+      }),
+    });
 
-    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    const data = await response.json();
+
+    if (!response.ok) {
+      const errMsg = data.error?.message || JSON.stringify(data);
+      throw new ConvexError(`Anthropic API error (${response.status}): ${errMsg}`);
+    }
+
+    const textContent =
+      data.content?.find((item: { type: string }) => item.type === "text")?.text || "";
+    const jsonMatch = textContent.match(/\{[\s\S]*\}/);
+
     if (jsonMatch) {
       return JSON.parse(jsonMatch[0]);
     }
     throw new ConvexError(
-      "Failed to parse style analysis. Response: " + text.slice(0, 500)
+      "Failed to parse style analysis. Response: " + textContent.slice(0, 500)
     );
   },
 });
@@ -119,7 +95,8 @@ export const generatePrompt = action({
     slideData: v.optional(v.any()),
   },
   handler: async (_ctx, args) => {
-    const { token, projectId } = await getGoogleToken();
+    const apiKey = process.env.ANTHROPIC_API_KEY;
+    if (!apiKey) throw new ConvexError("ANTHROPIC_API_KEY not set");
 
     const typeLabel =
       args.type === "main"
@@ -137,9 +114,20 @@ export const generatePrompt = action({
 `
       : "";
 
-    const text = await geminiGenerate(token, projectId, [
-      {
-        text: `Создай промпт для генерации инфографики товара, используя стиль из анализа.
+    const response = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify({
+        model: "claude-sonnet-4-6",
+        max_tokens: 2000,
+        messages: [
+          {
+            role: "user",
+            content: `Создай промпт для генерации инфографики товара, используя стиль из анализа.
 
 Стиль референса:
 ${JSON.stringify(args.styleAnalysis, null, 2)}
@@ -162,15 +150,27 @@ ${slideContext}
 }
 
 textBlocks — позиции текста на холсте 1000x1000px. Размести 3-6 блоков в логичных местах исходя из типа инфографики.`,
-      },
-    ]);
+          },
+        ],
+      }),
+    });
 
-    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    const data = await response.json();
+
+    if (!response.ok) {
+      const errMsg = data.error?.message || JSON.stringify(data);
+      throw new ConvexError(`Anthropic API error (${response.status}): ${errMsg}`);
+    }
+
+    const textContent =
+      data.content?.find((item: { type: string }) => item.type === "text")?.text || "";
+    const jsonMatch = textContent.match(/\{[\s\S]*\}/);
+
     if (jsonMatch) {
       return JSON.parse(jsonMatch[0]);
     }
     throw new ConvexError(
-      "Failed to parse generation prompt. Response: " + text.slice(0, 500)
+      "Failed to parse generation prompt. Response: " + textContent.slice(0, 500)
     );
   },
 });
