@@ -20,9 +20,6 @@ export const create = mutation({
     prompt: v.string(),
     styleNotes: v.string(),
     suggestedText: v.string(),
-    imageId: v.optional(v.id("_storage")),
-    textLayers: v.optional(v.any()),
-    slideProductImageId: v.optional(v.id("_storage")),
   },
   handler: async (ctx, args) => {
     return await ctx.db.insert("generatedImages", {
